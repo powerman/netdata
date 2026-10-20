@@ -86,7 +86,7 @@ struct command {
     },
     {
         .name = "sv-status-all",
-        .params = "-p -c $*/* - exec sv status {{serviceDir}}",
+        .params = "-c $*/* - exec sv status {{serviceDir}}",
         .search = {
             [0] = "sh",
             [1] = NULL,
