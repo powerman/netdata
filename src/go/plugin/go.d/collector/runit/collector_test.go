@@ -171,7 +171,6 @@ func TestCollector_Collect(t *testing.T) {
 				})
 			},
 			wantSeries: mergeSeries(
-				summarySeries(1, 5),
 				// sshd: run, 12345s — running, enabled (no "normally down").
 				serviceSeries("sshd", stateRunning, true, 0, 12345),
 				// cron: run, (pid 123) 999s, paused — paused, enabled.
@@ -194,7 +193,6 @@ func TestCollector_Collect(t *testing.T) {
 				})
 			},
 			wantSeries: mergeSeries(
-				summarySeries(2, 0),
 				// socklog: run, 500s; log subprocess also running. Both enabled.
 				serviceSeries("socklog", stateRunning, true, 0, 500),
 				serviceSeries("socklog/log", stateRunning, true, 0, 500),
@@ -207,7 +205,6 @@ func TestCollector_Collect(t *testing.T) {
 				})
 			},
 			wantSeries: mergeSeries(
-				summarySeries(1, 0),
 				serviceSeries("oneshot", stateRunning, false, 0, 5),
 			),
 		},
@@ -219,7 +216,6 @@ func TestCollector_Collect(t *testing.T) {
 			},
 			// The process got TERM after `sv down` and has not exited yet.
 			wantSeries: mergeSeries(
-				summarySeries(0, 1),
 				serviceSeries("nginx", stateStopping, true, 0, 10),
 			),
 		},
@@ -235,7 +231,6 @@ func TestCollector_Collect(t *testing.T) {
 				return collr
 			},
 			wantSeries: mergeSeries(
-				summarySeries(1, 0),
 				serviceSeries("sshd", stateRunning, true, 0, 12345),
 			),
 		},
@@ -245,7 +240,7 @@ func TestCollector_Collect(t *testing.T) {
 					data: []byte{},
 				})
 			},
-			wantSeries: summarySeries(0, 0),
+			wantSeries: mergeSeries(),
 		},
 		"error response": {
 			prepare: func(*testing.T) *Collector {
@@ -277,13 +272,6 @@ func TestCollector_Collect(t *testing.T) {
 func TestCollector_Cleanup(t *testing.T) {
 	collr := New()
 	assert.NotPanics(t, func() { collr.Cleanup(t.Context()) })
-}
-
-func summarySeries(running, notRunning metrix.SampleValue) map[string]metrix.SampleValue {
-	return map[string]metrix.SampleValue{
-		"running_services":     running,
-		"not_running_services": notRunning,
-	}
 }
 
 func serviceSeries(name, state string, enabled bool, down, running metrix.SampleValue) map[string]metrix.SampleValue {
