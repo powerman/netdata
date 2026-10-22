@@ -140,6 +140,10 @@ modules:
         metric: runit.service_state
         info: runit service stuck in transitioning state (starting or stopping)
         link: https://github.com/netdata/netdata/blob/master/src/health/health.d/runit.conf
+      - name: runit_service_crash_loop
+        metric: runit.service_restarts
+        info: number of runit service restarts during the last minute (crash loop)
+        link: https://github.com/netdata/netdata/blob/master/src/health/health.d/runit.conf
     metrics:
       folding:
         title: Metrics
