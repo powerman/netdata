@@ -124,13 +124,13 @@ modules:
       problems:
         list: []
     alerts:
-      - name: runit_service_failed_state
+      - name: runit_service_down_manual
         metric: runit.service_state
-        info: runit service in the failed state (should be running but is not)
+        info: runit service is stopped manually (it is normally up)
         link: https://github.com/netdata/netdata/blob/master/src/health/health.d/runit.conf
-      - name: runit_service_undesired_running
+      - name: runit_service_running_manual
         metric: runit.service_state
-        info: runit service is running but should be down (normally down)
+        info: runit service is started manually (it is normally down or will not be restarted)
         link: https://github.com/netdata/netdata/blob/master/src/health/health.d/runit.conf
       - name: runit_service_paused_state
         metric: runit.service_state
@@ -161,12 +161,12 @@ modules:
               chart_type: stacked
               dimensions:
                 - name: running
+                - name: running_manual
                 - name: down
-                - name: failed
+                - name: down_manual
                 - name: starting
                 - name: stopping
                 - name: paused
-                - name: enabled
             - name: runit.service_restarts
               description: Service Restarts
               unit: restarts/s
