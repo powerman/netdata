@@ -431,25 +431,31 @@ void rrdlabels_add_pair(RRDLABELS *labels, const char *string, RRDLABEL_SRC ls)
 
 // ----------------------------------------------------------------------------
 
+// Always adds exactly one item, the value or null, so the caller's array stays parallel to its dimensions.
 void rrdlabels_value_to_buffer_array_item_or_null(RRDLABELS *labels, BUFFER *wb, const char *key) {
-    if(!labels) return;
+    if(!labels) {
+        buffer_json_add_array_item_string(wb, NULL);
+        return;
+    }
 
     STRING *this_key = string_strdupz(key);
 
+    bool added = false;
     RRDLABEL *lb;
     RRDLABEL_SRC ls;
     lfe_start_read(labels, lb, ls)
     {
         if (lb->index.key == this_key) {
-            if (lb->index.value)
-                buffer_json_add_array_item_string(wb, string2str(lb->index.value));
-            else
-                buffer_json_add_array_item_string(wb, NULL);
+            buffer_json_add_array_item_string(wb, lb->index.value ? string2str(lb->index.value) : NULL);
+            added = true;
             break;
         }
     }
     lfe_done(labels);
     string_freez(this_key);
+
+    if(!added)
+        buffer_json_add_array_item_string(wb, NULL);
 }
 
 void rrdlabels_key_to_buffer_array_item(RRDLABELS *labels, BUFFER *wb)
@@ -546,7 +552,12 @@ void rrdlabels_get_value_strdup_or_null(RRDLABELS *labels, char **value, const c
 
 void rrdlabels_get_value_to_buffer_or_unset(RRDLABELS *labels, BUFFER *wb, const char *key, const char *unset)
 {
-    if(!labels || !key || !wb) return;
+    if(!key || !wb) return;
+
+    if(!labels) {
+        buffer_strcat(wb, unset);
+        return;
+    }
 
     STRING *this_key = string_strdupz(key);
     RRDLABEL *lb;
@@ -917,7 +928,7 @@ static SIMPLE_PATTERN_RESULT simple_pattern_match_name_only_callback(const char 
     struct simple_pattern_match_name_value *t = (struct simple_pattern_match_name_value *)data;
     (void)value;
 
-    // we return -1 to stop the walkthrough on first match
+    // any result other than SP_NOT_MATCHED stops the walkthrough
     t->searches++;
     SIMPLE_PATTERN_RESULT ret = simple_pattern_matches_extract(t->pattern, name, NULL, 0);
     if (ret == SP_MATCHED_NEGATIVE)
@@ -928,15 +939,13 @@ static SIMPLE_PATTERN_RESULT simple_pattern_match_name_only_callback(const char 
 static SIMPLE_PATTERN_RESULT simple_pattern_match_name_and_value_callback(const char *name, const char *value, RRDLABEL_SRC ls __maybe_unused, void *data) {
     struct simple_pattern_match_name_value *t = (struct simple_pattern_match_name_value *)data;
 
-    // we return -1 to stop the walkthrough on first match
-    t->searches++;
-    if(simple_pattern_matches(t->pattern, name)) return -1;
-
+    // any result other than SP_NOT_MATCHED stops the walkthrough
     char tmp[RRDLABELS_MAX_NAME_LENGTH + RRDLABELS_MAX_VALUE_LENGTH + 2], *dst = &tmp[0];
+    const char *n = name;
     const char *v = value;
 
     // copy the name
-    while(*name) *dst++ = *name++;
+    while(*n) *dst++ = *n++;
 
     // add the equal
     *dst++ = t->equal;
@@ -947,8 +956,14 @@ static SIMPLE_PATTERN_RESULT simple_pattern_match_name_and_value_callback(const 
     // terminate it
     *dst = '\0';
 
+    // name=value first, so that a negative 'key=value' is not overridden by a bare 'key'
     t->searches++;
-    return simple_pattern_matches_length_extract(t->pattern, tmp, dst - tmp, NULL, 0);
+    SIMPLE_PATTERN_RESULT ret = simple_pattern_matches_length_extract(t->pattern, tmp, dst - tmp, NULL, 0);
+    if(ret != SP_NOT_MATCHED)
+        return ret;
+
+    t->searches++;
+    return simple_pattern_matches(t->pattern, name) ? SP_MATCHED_POSITIVE : SP_NOT_MATCHED;
 }
 
 SIMPLE_PATTERN_RESULT rrdlabels_match_simple_pattern_parsed(RRDLABELS *labels, SIMPLE_PATTERN *pattern, char equal, size_t *searches) {
@@ -2065,6 +2080,17 @@ static int rrdlabels_unittest_simple_pattern() {
     errors += rrdlabels_unittest_check_simple_pattern(labels, "tag*=value*", true);
     errors += rrdlabels_unittest_check_simple_pattern(labels, "!tag*=value*", false);
     errors += rrdlabels_unittest_check_simple_pattern(labels, "!tag2=something2 tag2=*2", true);
+
+    // a bare key mixed with key=value terms
+    errors += rrdlabels_unittest_check_simple_pattern(labels, "tag1 tag2=x", true);
+    errors += rrdlabels_unittest_check_simple_pattern(labels, "tag1 tag2:x", true);
+    errors += rrdlabels_unittest_check_simple_pattern(labels, "tag4 tag2=x", false);
+    errors += rrdlabels_unittest_check_simple_pattern(labels, "!tag1=value1 tag1", false);
+    errors += rrdlabels_unittest_check_simple_pattern(labels, "!tag1=value9 tag1", true);
+    errors += rrdlabels_unittest_check_simple_pattern(labels, "tag1 !tag1=value1", false);
+    errors += rrdlabels_unittest_check_simple_pattern(labels, "tag1 !tag1=value9", true);
+    errors += rrdlabels_unittest_check_simple_pattern(labels, "!tag1:value1 tag1", false);
+    errors += rrdlabels_unittest_check_simple_pattern(labels, "tag1 !tag1:value1", false);
 
     rrdlabels_destroy(labels);
 

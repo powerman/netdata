@@ -361,11 +361,21 @@ if(ENABLE_NETDATA_JOURNAL_FILE_READER OR ENABLE_PLUGIN_OTEL OR ENABLE_PLUGIN_NET
                                CRATES ${_WORKSPACE_CRATES})
     endif()
 
+    # Cargo links the Rust executables through the bare compiler driver, so CMAKE_EXE_LINKER_FLAGS never reach those
+    # links. When the build asks for the Cortex-A53 erratum workarounds (static aarch64), have the linker apply them to
+    # the Rust code too: 843419 and 835769 can both be fixed at link time, and rustc has no -mfix-cortex-a53-* flags.
+    # 8-byte function alignment stops ld.bfd's 843419 fix stubs from shifting code it has already scanned.
+    set(_nd_rust_link_flags "")
+    if(CMAKE_EXE_LINKER_FLAGS MATCHES "--fix-cortex-a53-843419")
+        list(APPEND _nd_rust_link_flags "-Clink-arg=-Wl,--fix-cortex-a53-835769" "-Clink-arg=-Wl,--fix-cortex-a53-843419")
+        list(APPEND _nd_rust_link_flags "-Cllvm-args=-align-all-functions=3")
+    endif()
+
     if(ENABLE_PLUGIN_OTEL)
       if(STATIC_BUILD)
-        corrosion_add_target_rustflags(otel-plugin --cfg=tracing_unstable "-C" "target-feature=+crt-static")
+        corrosion_add_target_rustflags(otel-plugin --cfg=tracing_unstable "-C" "target-feature=+crt-static" ${_nd_rust_link_flags})
       else()
-        corrosion_add_target_rustflags(otel-plugin --cfg=tracing_unstable)
+        corrosion_add_target_rustflags(otel-plugin --cfg=tracing_unstable ${_nd_rust_link_flags})
       endif()
 
       # The workspace release profile propagates fat LTO, single-codegen-unit,
@@ -413,12 +423,16 @@ if(ENABLE_NETDATA_JOURNAL_FILE_READER OR ENABLE_PLUGIN_OTEL OR ENABLE_PLUGIN_NET
         list(APPEND NETFLOW_PLUGIN_RUSTFLAGS "-C" "target-feature=+crt-static")
       endif()
 
+      list(APPEND NETFLOW_PLUGIN_RUSTFLAGS ${_nd_rust_link_flags})
+
       if(NETFLOW_PLUGIN_RUSTFLAGS)
         corrosion_add_target_rustflags(netflow-plugin ${NETFLOW_PLUGIN_RUSTFLAGS})
       endif()
 
       corrosion_set_env_vars(netflow-plugin ${NETFLOW_PLUGIN_ENV_VARS})
     endif()
+
+    unset(_nd_rust_link_flags)
 endif()
 
 option(ENABLE_MIMALLOC "Enable mimalloc allocator" OFF)
@@ -711,6 +725,9 @@ check_function_exists(nice HAVE_NICE)
 check_function_exists(recvmmsg HAVE_RECVMMSG)
 check_function_exists(getpriority HAVE_GETPRIORITY)
 check_function_exists(setenv HAVE_SETENV)
+check_function_exists(secure_getenv HAVE_SECURE_GETENV)
+check_function_exists(getauxval HAVE_GETAUXVAL)
+check_function_exists(issetugid HAVE_ISSETUGID)
 check_function_exists(strndup HAVE_STRNDUP)
 
 check_function_exists(sched_getscheduler HAVE_SCHED_GETSCHEDULER)
@@ -1398,6 +1415,7 @@ if(NOT OS_FREEBSD)
     )
 
     list(APPEND LIBNETDATA_FILES ${LIBNETDATA_STACKTRACE_FILES})
+    set(HAVE_STACKTRACE True)
 endif()
 
 list(APPEND LIBNETDATA_FILES ${INICFG_FILES})
@@ -1797,6 +1815,7 @@ set(PLUGINSD_PLUGIN_FILES
         src/plugins.d/pluginsd_dyncfg.h
         src/plugins.d/pluginsd_functions.c
         src/plugins.d/pluginsd_functions-unittest.c
+        src/plugins.d/pluginsd_vnodes-unittest.c
         src/plugins.d/pluginsd_functions.h
         src/plugins.d/pluginsd_internals.c
         src/plugins.d/pluginsd_internals.h
@@ -3411,6 +3430,7 @@ if(ENABLE_PLUGIN_EBPF)
                         CGO_LDFLAGS=${EBPF_GO_CGO_LDFLAGS}
                         GOPROXY=https://proxy.golang.org,direct
                         "${GO_EXECUTABLE}" build -buildvcs=false
+                        -ldflags "-X 'main.netdataPluginsDir=${PLUGINS_DIR}' -X 'main.netdataUserConfigDir=${CONFIG_DIR}' -X 'main.netdataStockConfigDir=${LIBCONFIG_DIR}'"
                         -tags netdata_ebpf_libbpf
                         -o "${CMAKE_BINARY_DIR}/ebpf-go.plugin"
                         "."

@@ -447,6 +447,36 @@ jobs:
           path: artifacts/*.gz.run
           compression-level: 0
           retention-days: 30
+      - name: Check Cortex-A53 erratum workarounds
+        id: check-a53-errata
+        if: needs.file-check.outputs.run == 'true' && matrix.arch == 'aarch64'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # The build machines do not exhibit Cortex-A53 erratum 843419, so the runtime checks cannot see a binary
+          # linked without its workaround; scan the shipped executables instead.
+          archive="$(find "${GITHUB_WORKSPACE}/artifacts" \
+            -maxdepth 1 \
+            -type f \
+            -name 'netdata-aarch64-*.gz.run' \
+            ! -name '*-latest.gz.run' \
+            -print \
+            -quit)"
+          if [ -z "${archive}" ]; then
+            printf >&2 'ERROR: static archive for aarch64 was not produced\n'
+            exit 1
+          fi
+
+          extract_dir="$(mktemp -d)"
+          trap 'rm -rf -- "${extract_dir}"' EXIT
+          (
+            cd "${extract_dir}"
+            sh "${archive}" --tar xf
+          )
+
+          python3 .github/scripts/test-check-a53-erratum-843419.py
+          python3 .github/scripts/check-a53-erratum-843419.py "${extract_dir}"
       - name: Failure Notification
         uses: rtCamp/action-slack-notify@v2
         env:
@@ -465,6 +495,7 @@ jobs:
               Build: ${{ steps.build.outcome }}
               Verify topology stock payload: ${{ steps.verify-topology-stock.outcome }}
               Store: ${{ steps.store.outcome }}
+              Check Cortex-A53 erratum workarounds: ${{ steps.check-a53-errata.outcome }}
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
         if: >-
           ${{
@@ -525,14 +556,6 @@ jobs:
           file-digest: SHA256
           timestamp-rfc3161: "http://timestamp.acs.microsoft.com"
           timestamp-digest: SHA256
-      - name: Cache Patched MSYS2 Runtime
-        id: msys2-runtime-cache
-        # Not on dispatch: published installers always rebuild the runtime from the pinned sources.
-        if: needs.file-check.outputs.run == 'true' && github.event_name != 'workflow_dispatch'
-        uses: actions/cache@v6
-        with:
-          path: C:\msys64\msys2-runtime
-          key: msys2-runtime-${{ hashFiles('packaging/windows/msys2-runtime/**') }}
       - name: Package Netdata
         id: package
         if: needs.file-check.outputs.run == 'true'
@@ -563,15 +586,6 @@ jobs:
           path: packaging\windows\netdata*.msi
           compression-level: 0
           retention-days: 30
-      - name: Upload MSYS2 Runtime Debug Symbols
-        id: upload-msys2-runtime-debug
-        if: needs.file-check.outputs.run == 'true'
-        uses: actions/upload-artifact@v7
-        with:
-          name: windows-msys2-runtime-debug
-          path: C:\msys64\msys2-runtime\*\msys-2.0.dbg
-          if-no-files-found: error
-          retention-days: 90
       - name: Failure Notification
         uses: rtCamp/action-slack-notify@v2
         env:
@@ -710,7 +724,7 @@ jobs:
       - name: Prepare Artifacts
         id: consolidate
         if: needs.file-check.outputs.run == 'true'
-        run: .github/scripts/prepare-artifacts.sh dist-artifacts ${{ steps.import-keys.outputs.fingerprint }}
+        run: .github/scripts/prepare-artifacts.sh dist-artifacts "${{ steps.import-keys.outputs.fingerprint }}" "${{ github.event_name }}" "${{ github.event.inputs.type }}"
       - name: Store GitHub Artifacts
         id: store-github
         if: needs.file-check.outputs.run == 'true'
@@ -1106,8 +1120,9 @@ jobs:
           RCLONE_CONFIG_S3_REGION: "auto"
         working-directory: artifacts
         run: |
-          rclone copy --verbose --fast-list --use-server-modtime --header-upload "Cache-Control: no-transform" ./ s3:netdata-agent-artifacts/nightly/ || exit 1
-          rclone sync --verbose --fast-list --use-server-modtime --header-upload "Cache-Control: no-transform" ./latest/ s3:netdata-agent-artifacts/nightly/latest/ || exit 1
+          for dir in */ ; do
+            rclone sync --verbose --fast-list --use-server-modtime --header-upload "Cache-Control: no-transform" "${dir}" "s3:netdata-agent-artifacts/nightly/${dir}" || exit 1
+          done
       - name: Failure Notification
         uses: rtCamp/action-slack-notify@v2
         env:
@@ -1240,8 +1255,9 @@ jobs:
           RCLONE_CONFIG_S3_REGION: "auto"
         working-directory: artifacts
         run: |
-          rclone copy --verbose --fast-list --use-server-modtime --header-upload "Cache-Control: no-transform" ./ s3:netdata-agent-artifacts/stable/ || exit 1
-          rclone sync --verbose --fast-list --use-server-modtime --header-upload "Cache-Control: no-transform" ./latest/ s3:netdata-agent-artifacts/stable/latest/ || exit 1
+          for dir in */ ; do
+            rclone sync --verbose --fast-list --use-server-modtime --header-upload "Cache-Control: no-transform" "${dir}" "s3:netdata-agent-artifacts/stable/${dir}" || exit 1
+          done
       - name: Failure Notification
         uses: rtCamp/action-slack-notify@v2
         env:
